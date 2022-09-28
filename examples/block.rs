@@ -15,6 +15,7 @@ fn main() -> Result<(), std::io::Error> {
         println!("Name: {:?}", block.fancy_name());
         println!("Is a partition: {:?}", block.is_partition());
         println!("Size: {:?} GB", block.size_gigabytes());
+        println!("Removable device: {:?}", block.removable());
         if !block.is_partition()? {
             println!("Partitions:");
             for part in block.partitions() {

@@ -187,6 +187,14 @@ impl Block {
         ret
     }
 
+    pub fn removable(&self) -> Option<bool> {
+        if let Ok(val) = self.get_i32("removable") {
+            val.map(|v| v == 1)
+        } else {
+            None
+        }
+    }
+
     pub fn size_bytes(&self) -> Option<u64> {
         if let Ok(Some(val)) = self.get_i32("size") {
             Some(val as u64 * 512)
