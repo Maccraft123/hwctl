@@ -1,10 +1,7 @@
 use hwctl::{
     sysfs::{
         Backlight,
-        Sysfs,
-        SysfsClass,
         SysfsDevice,
-        SysfsInnerDevice,
     },
 };
 
@@ -24,26 +21,22 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    if let Some(new) = args.inc_brightness {
-        let mut backlight: Vec<SysfsDevice> = SysfsClass::new("backlight")?.enum_devices()?.into_iter().collect();
+    if let Some(delta) = args.inc_brightness {
+        let backlight: Vec<Backlight> = Backlight::enumerate_all()?;
         if backlight.len() == 0 {
-            return Err(anyhow!("Failed to find backlight device"))
+            return Err(anyhow!("Failed to find backlight device or found too many"))
         }
 
-        if let SysfsInnerDevice::Backlight(dev) = backlight.swap_remove(0).into_inner() {
-            dev.inc(new)?;
-        }
+        backlight[0].inc_bl(delta)?;
     }
-
-    if let Some(new) = args.set_brightness {
-        let mut backlight: Vec<SysfsDevice> = SysfsClass::new("backlight")?.enum_devices()?.into_iter().collect();
+    
+    if let Some(val) = args.set_brightness {
+        let backlight: Vec<Backlight> = Backlight::enumerate_all()?;
         if backlight.len() == 0 {
-            return Err(anyhow!("Failed to find backlight device"))
+            return Err(anyhow!("Failed to find backlight device or found too many"))
         }
 
-        if let SysfsInnerDevice::Backlight(dev) = backlight.swap_remove(0).into_inner() {
-            dev.set(new)?;
-        }
+        backlight[0].set_bl(val)?;
     }
     Ok(())
 }

@@ -1,9 +1,7 @@
-
 use std::{
     io,
     fs,
     path::PathBuf,
-    convert,
     ops,
 };
 
@@ -11,131 +9,75 @@ fn map<T: Copy + PartialOrd + ops::Sub<Output = T> + ops::Mul<Output = T> + ops:
     (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 }
 
+pub trait SysfsDevice {
+    fn class() -> String;
 
-
-pub struct Sysfs();
-
-impl Sysfs {
-    pub fn enum_classes() -> Result<Vec<SysfsClass>, io::Error> {
-        let mut ret = Vec::new();
-        for entry in fs::read_dir("/sys/class")? {
-            if let Some(class) = SysfsClass::from_path(&entry?.path()) {
-                ret.push(class);
+    fn path(&self) -> PathBuf;
+    fn enumerate_all() -> Result<Vec<Self>, io::Error>
+        where Self: Sized + Send + Sync
+    {
+        let mut out = Vec::new();
+        let class_path = format!("/sys/class/{}/", Self::class());
+        let devices = fs::read_dir(class_path)?;
+        for device in devices {
+            if let Some(new) = Self::try_from_path(device?.path()) {
+                out.push(new);
             }
         }
-
-        Ok(ret)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SysfsClass {
-    class: String,
-    path: PathBuf,
-}
-
-impl SysfsClass {
-    pub fn from_path(path: &PathBuf) -> Option<SysfsClass> {
-        let path_string = path.to_string_lossy();
-        let path_split: Vec<&str> = path_string.split("/").collect();
-        if let ["", "sys", "class", class] = &path_split[..] {
-            Some(Self {
-                class: class.to_string(),
-                path: path.clone(),
-            })
-        } else {
-            None
-        }
-    }
-    pub fn new(name: &str) -> Result<SysfsClass, io::Error> {
-        let path = PathBuf::from(format!("/sys/class/{}/", name));
-        if path.exists() {
-            Ok(Self {
-                class: name.to_string(),
-                path: path
-            })
-        } else {
-            Err(io::Error::from(io::ErrorKind::NotFound))
-        }
+        Ok(out)
     }
 
-    pub fn enum_devices(&self) -> Result<Vec<SysfsDevice>, io::Error> {
-        let mut ret = Vec::new();
-        for entry in fs::read_dir(&self.path)? {
-            if let Some(device) = SysfsDevice::from_path(&entry?.path()) {
-                ret.push(device.clone())
-            }
-        }
-
-        Ok(ret)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SysfsDevice {
-    pub class: String,
-    pub device: String,
-    pub path: PathBuf,
-}
-
-impl SysfsDevice {
-    pub fn from_path(path: &PathBuf) -> Option<SysfsDevice> {
-        let path_string = path.to_string_lossy();
-        let path_split: Vec<&str> = path_string.split("/").collect();
-        if let ["", "sys", "class", class, device] = &path_split[..] {
-            Some(Self {
-                class: class.to_string(),
-                device: device.to_string(),
-                path: path.clone(),
-            })
-        } else {
-            None
-        }
+    fn dev_path(&self) -> Option<PathBuf> {
+        None
     }
 
-    pub fn get_value(&self, val: &str) -> Result<String, io::Error> {
-        let path = format!("/sys/class/{}/{}/{}", &self.class, &self.device, val);
+    fn from_path(path: PathBuf) -> Self;
+
+    fn try_from_path(path: PathBuf) -> Option<Self> 
+        where Self: Sized + Send + Sync
+    {
+        Some(Self::from_path(path))
+    }
+
+    fn get(&self, key: &str) -> Result<String, io::Error> {
+        let path = format!("{}/{}", self.path().to_string_lossy(), key);
         Ok(fs::read_to_string(path)?.trim().to_string())
     }
 
-    pub fn set_value(&self, val: &str, data: &str) -> Result<(), io::Error> {
-        let path = format!("/sys/class/{}/{}/{}", &self.class, &self.device, val);
-        fs::write(path, data)
+    fn get_i32(&self, key: &str) -> Result<Option<i32>, io::Error> {
+        let path = format!("{}/{}", self.path().to_string_lossy(), key);
+        let string = fs::read_to_string(path)?.trim().to_string();
+        Ok(i32::from_str_radix(&string, 10).ok())
     }
 
-    pub fn get_device_value(&self, val: &str) -> Result<String, io::Error> {
-        let path = format!("/sys/class/{}/{}/device/{}", &self.class, &self.device, val);
+    fn get_device(&self, key: &str) -> Result<String, io::Error> {
+        let path = format!("{}/device/{}", self.path().to_string_lossy(), key);
         Ok(fs::read_to_string(path)?.trim().to_string())
     }
 
-    pub fn into_inner(self) -> SysfsInnerDevice {
-        match self.class.as_str() {
-            "backlight" => SysfsInnerDevice::Backlight(Backlight{inner: self}),
-            "block" => SysfsInnerDevice::Block(Block{inner: self}),
-            class => SysfsInnerDevice::Other(class.to_string(), self),
-        }
+    fn set<T>(&self, key: &str, value: T) -> Result<(), io::Error>
+        where T: ToString
+    {
+        let path = format!("{}/{}", self.path().to_string_lossy(), key);
+        fs::write(path, value.to_string())
     }
-}
-
-#[derive(Debug)]
-pub enum SysfsInnerDevice {
-    Backlight(Backlight),
-    Block(Block),
-    Bluetooth,
-    Firmware,
-    Hwmon,
-    I2cDev,
-    Input,
-    Leds,
-    Net,
-    PowerSupply,
-    Thermal,
-    Other(String, SysfsDevice),
 }
 
 #[derive(Debug)]
 pub struct Backlight {
-    inner: SysfsDevice,
+    path: PathBuf,
+}
+
+impl SysfsDevice for Backlight {
+    fn class() -> String {
+        "backlight".to_string()
+    }
+    fn path(&self) -> PathBuf {
+        self.path.clone()
+    }
+    fn from_path(path: PathBuf) -> Backlight {
+        Self {path}
+    }
 }
 
 impl Backlight {
@@ -150,54 +92,65 @@ impl Backlight {
     }
 
     fn max_brightness(&self) -> Result<i32, io::Error> {
-        Ok(i32::from_str_radix(&self.inner.get_value("max_brightness")?, 10).unwrap_or_default())
+        self.get_i32("max_brightness").map(|v| v.unwrap_or(0))
     }
 
     fn cur_val(&self) -> Result<u8, io::Error> {
-        let max = self.max_brightness()?;
-        let min = 0;
-        let val = u8::from_str_radix(&self.inner.get_value("brightness")?, 10).unwrap_or_default();
-        Ok(map(val as i32, min, max, 0 as i32, 255 as i32).try_into().unwrap())
+        let val = i32::from_str_radix(&self.get("brightness")?, 10).unwrap_or(0);
+        Ok(self.map_to_u8(val)?)
     }
 
     #[inline]
-    pub fn inc(&self, val: i16) -> Result<(), io::Error> {
+    pub fn inc_bl(&self, val: i16) -> Result<(), io::Error> {
         let new = if val >= 0 {
             u8::saturating_add(self.cur_val()?, val.try_into().unwrap())
         } else {
             u8::saturating_sub(self.cur_val()?, (val * -1).try_into().unwrap())
         };
 
-        self.set(new)
+        self.set_bl(new)
     }
-
     #[inline]
-    pub fn set(&self, val: u8) -> Result<(), io::Error> {
-        self.inner.set_value("brightness", &self.map_from_u8(val.into())?.to_string())
+    pub fn set_bl(&self, val: u8) -> Result<(), io::Error> {
+        self.set("brightness", self.map_from_u8(val)?)
     }
 }
 
 #[derive(Debug)]
 pub struct Block {
-    pub inner: SysfsDevice,
+    path: PathBuf,
+    device: String,
 }
 
-impl Block {
-    #[inline]
-    pub fn dev_path(&self) -> Option<PathBuf> {
-        let path: PathBuf = ["/dev/", &self.inner.device].iter().collect();
+impl SysfsDevice for Block {
+    fn class() -> String {
+        "block".to_string()
+    }
+    fn path(&self) -> PathBuf {
+        self.path.clone()
+    }
+    fn from_path(path: PathBuf) -> Block {
+        let device = path.file_name().unwrap_or_default().to_str().unwrap().to_string();
+        Self {
+            path,
+            device,
+        }
+    }
+    fn dev_path(&self) -> Option<PathBuf> {
+        let path = PathBuf::from("/dev/").join(&self.device);
         if path.exists() {
             Some(path)
         } else {
             None
         }
     }
+}
 
-    #[inline]
+impl Block {
     pub fn fancy_name(&self) -> Option<String> {
         // trim because there can be lots of spaces on either side and there's a newline randomly
-        let model = self.inner.get_device_value("model").unwrap_or_default();
-        let vendor = self.inner.get_device_value("vendor").unwrap_or_default();
+        let model = self.get_device("model").unwrap_or_default();
+        let vendor = self.get_device("vendor").unwrap_or_default();
 
         // if both empty we got nothing
         if model.is_empty() && vendor.is_empty() {
@@ -213,49 +166,33 @@ impl Block {
         Some(format!("{} {}", vendor, model))
     }
 
-    #[inline]
     pub fn is_partition(&self) -> Result<bool, io::Error> {
         // didn't find any other way
-        let has_start = self.inner.get_value("start").is_ok();
-        let has_partition = self.inner.get_value("partition").is_ok();
+        let has_start = self.get("start").is_ok();
+        let has_partition = self.get("partition").is_ok();
         Ok(has_partition || has_start)
     }
 
-    #[inline]
-    pub fn partitions(&self) -> Option<Vec<Block>> {
+    pub fn partitions(&self) -> Vec<Block> {
         let mut ret = Vec::new();
-        let self_dir_iter = fs::read_dir(&self.inner.path).unwrap();
+        let self_dir_iter = fs::read_dir(&self.path).unwrap();
         for entry in self_dir_iter {
             let entry = entry.unwrap();
             let entryname = entry.file_name().into_string().unwrap();
-            if entryname.starts_with(&self.inner.device) {
-                let dev = SysfsDevice::from_path(&PathBuf::from("/sys/class/block/".to_string() + &entryname));
-                if let SysfsInnerDevice::Block(out) = dev.unwrap().into_inner() {
-                    ret.push(out)
-                }
+            if entryname.starts_with(&self.device) {
+                let path = PathBuf::from("/sys/class/block/".to_string() + &entryname);
+                ret.push(Block::from_path(path))
             }
         }
+        ret
+    }
 
-        if !ret.is_empty() {
-            Some(ret)
+    pub fn size_bytes(&self) -> Option<u64> {
+        if let Ok(Some(val)) = self.get_i32("size") {
+            Some(val as u64 * 512)
         } else {
             None
         }
-    }
-
-    #[inline]
-    pub fn name(&self) -> &str {
-        &self.inner.device
-    }
-
-    #[inline]
-    pub fn size_bytes(&self) -> Option<u64> {
-        if let Ok(val) = self.inner.get_value("size") {
-            if let Ok(size) = u64::from_str_radix(&val, 10) {
-                return Some(size*512);
-            }
-        }
-        None
     }
 
     #[inline]
